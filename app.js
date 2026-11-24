@@ -1,7 +1,7 @@
 /* PoiWallet 1.2.0 — all data stays in this browser (localStorage). */
 (() => {
   "use strict";
-  const VERSION = "1.2.0";
+  const VERSION = "1.3.0";
   const KEY = "poiwallet.v1";
   const $ = id => document.getElementById(id);
 
@@ -159,6 +159,24 @@
     if (isIOS && appStore) return { href: appStore, alt: "" };
     return { href: c.link || play || appStore || "", alt: "" };
   }
+  // A card opens its official app straight from the list when this device can start it (Android/iPhone),
+  // or when the card links to a website. Otherwise tapping shows the barcode as before.
+  function directHref(c) {
+    if (!c.appId && !c.link) return "";
+    const { href } = appHref(c);
+    if (!href) return "";
+    if (c.appId || /^https:\/\/(play\.google\.com|apps\.apple\.com)\//.test(c.link || "")) return isAndroid || isIOS ? href : "";
+    return href;
+  }
+  // Link cards to their official app by store name, unless the person unlinked it themselves.
+  function autoLinkApps() {
+    let changed = false;
+    for (const c of cards()) {
+      if (c.appId || c.link || c.noApp) continue;
+      const m = matchApp(c.name); if (m) { c.appId = m.id; changed = true; }
+    }
+    return changed;
+  }
   let chosenAppId = null, appDismissed = false;
   function paintAppUI() {
     const linked = chosenAppId && appById(chosenAppId);
@@ -215,6 +233,7 @@
     document.querySelectorAll("[data-poi]").forEach(el => { el.innerHTML = mascotSvg(el.dataset.poi); });
   }
   function render() {
+    if (autoLinkApps()) save();
     const all = cards();
     const q = $("q").value.trim().toLowerCase();
     let rows = all.filter(c => {
@@ -224,13 +243,13 @@
     });
     rows = sortCards(rows, $("sort").value);
 
-    $("list").innerHTML = rows.length ? rows.map(c => `
-      <button class="card" type="button" data-id="${esc(c.id)}" style="--c:${esc(c.color)};--cf:${textOn(c.color)}">
+    $("list").innerHTML = rows.length ? rows.map(c => { const dh = directHref(c); const tag = dh ? "a" : "button"; return `<div class="cardw">
+      <${tag} class="card${dh ? " opens" : ""}" ${dh ? `href="${esc(dh)}"${dh.startsWith("intent:") ? "" : ' target="_blank" rel="noopener noreferrer"'} aria-label="${esc(c.name + " – " + t("openApp"))}"` : 'type="button"'} data-id="${esc(c.id)}" style="--c:${esc(c.color)};--cf:${textOn(c.color)}">
         <span class="store">${c.fav ? '<span aria-hidden="true">★</span>' : ""}${esc(c.name)}</span>
         <span class="num">${esc(c.num)}</span>
         <span class="pts"><b>${esc(fmtPts(c.pts))}</b><small>${esc(t("pts"))}</small></span>
-        <span class="meta">${expiryChip(c)}${couponChip(c)}${c.link || c.appId ? `<span class="chip soft">↗ ${esc(t("appChip"))}</span>` : ""}${c.cat ? `<span class="chip soft">${esc(t("cat_" + c.cat))}</span>` : ""}</span>
-      </button>`).join("")
+        <span class="meta">${expiryChip(c)}${couponChip(c)}${dh ? `<span class="chip open">↗ ${esc(t("openApp"))}</span>` : c.link || c.appId ? `<span class="chip soft">↗ ${esc(t("appChip"))}</span>` : ""}${c.cat ? `<span class="chip soft">${esc(t("cat_" + c.cat))}</span>` : ""}</span>
+      </${tag}>${dh ? `<button class="card-more" type="button" data-more="${esc(c.id)}">${esc(t(c.num ? "cardBarcode" : "cardDetails"))}</button>` : ""}</div>`; }).join("")
       : all.length
         ? `<div class="empty"><p>${esc(t("noMatch"))}</p></div>`
         : `<div class="empty"><span class="poi-s">${window.mascotSvg ? mascotSvg("sleepy") : ""}</span><h2>${esc(t("emptyTitle"))}</h2><p>${esc(t("emptyBody"))}</p><button class="btn primary" type="button" data-act="add">＋ ${esc(t("add"))}</button></div>`;
@@ -397,7 +416,7 @@
     $("formTitle").textContent = t(id ? "editTitle" : "addTitle");
     $("fName").value = c.name; $("fNum").value = c.num; $("fFmt").value = c.fmt; $("fCat").value = c.cat || "other";
     $("fLink").value = c.link || "";
-    chosenAppId = c.appId || null; appDismissed = false; paintAppUI();
+    chosenAppId = c.appId || null; appDismissed = !!c.noApp; paintAppUI();
     $("fPts").value = c.pts === "" || c.pts == null ? "" : c.pts; $("fExp").value = c.exp || ""; $("fNotes").value = c.notes || ""; $("fFav").checked = !!c.fav;
     $("fImg").value = ""; chosenColor = c.color; paintSwatches();
     $("fDel").hidden = !id; $("fDel").dataset.armed = ""; $("fDel").textContent = t("del");
@@ -414,7 +433,8 @@
     const err = !name ? t("errName") : link === null && !chosenAppId ? t("linkErr") : !num && !link && !chosenAppId ? t("errNumber") : num ? validate(fmt, num) : "";
     if (err) { $("fErr").textContent = err; $("fErr").hidden = false; return; }
     const ptsRaw = parseFloat(String($("fPts").value).replace(",", "."));
-    const data = { name, num, link: chosenAppId ? "" : link, appId: chosenAppId || "", fmt: num ? fmt : "none", cat: $("fCat").value, pts: isFinite(ptsRaw) && ptsRaw > 0 ? ptsRaw : 0, exp: $("fExp").value, notes: $("fNotes").value.trim(), fav: $("fFav").checked, color: chosenColor, updated: Date.now() };
+    if (!chosenAppId && !appDismissed && !link) { const m = matchApp(name); if (m) chosenAppId = m.id; }
+    const data = { name, num, link: chosenAppId ? "" : link, appId: chosenAppId || "", noApp: !chosenAppId && appDismissed, fmt: num ? fmt : "none", cat: $("fCat").value, pts: isFinite(ptsRaw) && ptsRaw > 0 ? ptsRaw : 0, exp: $("fExp").value, notes: $("fNotes").value.trim(), fav: $("fFav").checked, color: chosenColor, updated: Date.now() };
     if (editingId) {
       Object.assign(cards().find(x => x.id === editingId), data, { sample: false });
       toast(t("saved"));
@@ -558,7 +578,7 @@
           id: typeof raw.id === "string" ? raw.id : uid(), name: raw.name.slice(0, 50), num: raw.num.slice(0, 200),
           fmt: FORMATS.some(f => f.id === raw.fmt) ? raw.fmt : "code128", cat: CATS.includes(raw.cat) ? raw.cat : "other",
           pts: +raw.pts > 0 ? +raw.pts : 0, exp: /^\d{4}-\d{2}-\d{2}$/.test(raw.exp || "") ? raw.exp : "",
-          notes: String(raw.notes || "").slice(0, 120), link: cleanLink(raw.link) || "", appId: APPS.some(x => x.id === raw.appId) ? raw.appId : "", fav: !!raw.fav, color: /^#[0-9a-f]{6}$/i.test(raw.color || "") ? raw.color : COLORS[0],
+          notes: String(raw.notes || "").slice(0, 120), link: cleanLink(raw.link) || "", appId: APPS.some(x => x.id === raw.appId) ? raw.appId : "", noApp: !!raw.noApp, fav: !!raw.fav, color: /^#[0-9a-f]{6}$/i.test(raw.color || "") ? raw.color : COLORS[0],
           used: +raw.used || 0, lastUsed: +raw.lastUsed || 0, created: +raw.created || Date.now(), updated: +raw.updated || Date.now(),
           coupons: (raw.coupons || []).filter(k => k && typeof k.title === "string").slice(0, 200).map(k => ({
             id: typeof k.id === "string" ? k.id : uid(), title: k.title.slice(0, 60), detail: String(k.detail || "").slice(0, 120),
@@ -807,7 +827,13 @@
   // ---------- Wiring ----------
   function bind() {
     $("list").addEventListener("click", e => {
-      const card = e.target.closest(".card"); if (card) return openShow(card.dataset.id);
+      const more = e.target.closest("[data-more]"); if (more) return openShow(more.dataset.more);
+      const card = e.target.closest(".card"); if (card && card.classList.contains("opens")) {
+        const c = cards().find(x => x.id === card.dataset.id);
+        if (c) { c.used = (c.used || 0) + 1; c.lastUsed = Date.now(); save(); }
+        return; // the link itself opens the official app
+      }
+      if (card) return openShow(card.dataset.id);
       if (e.target.closest("[data-act=add]")) openForm();
     });
     $("chips").addEventListener("click", e => { const b = e.target.closest("[data-f]"); if (b) { filter = b.dataset.f; render(); } });
