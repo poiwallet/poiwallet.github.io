@@ -1,7 +1,7 @@
 /* PoiWallet 1.2.0 — all data stays in this browser (localStorage). */
 (() => {
   "use strict";
-  const VERSION = "1.3.1";
+  const VERSION = "1.4.0";
   const KEY = "poiwallet.v1";
   const $ = id => document.getElementById(id);
 
@@ -144,7 +144,9 @@
   const normName = s => String(s || "").toLowerCase().normalize("NFKC").replace(/[\s・\-‐_.'’!！]/g, "");
   function matchApp(name) {
     const n = normName(name); if (n.length < 2) return null;
-    return APPS.find(a => a.names.some(x => { const y = normName(x); return n.includes(y) || (y.startsWith(n) && n.length >= 2); })) || null;
+    // Whole-name matches first ("マック" is McDonald's), then names that start with what was typed.
+    return APPS.find(a => a.names.some(x => n.includes(normName(x))))
+      || APPS.find(a => a.names.some(x => normName(x).startsWith(n))) || null;
   }
   const appById = id => APPS.find(a => a.id === id) || null;
   const isAndroid = /android/i.test(navigator.userAgent);
@@ -166,6 +168,8 @@
     // Android, running as its own page or installed app: start the installed app directly,
     // falling back to its Play page. Embedded previews block that kind of link, so there we use the store page.
     let framed = true; try { framed = window.top !== window; } catch (e) {}
+    // A directory app that has no version for this phone's store: nothing to open here, show the barcode instead.
+    if (a && ((isAndroid && !pkg) || (isIOS && !appStore))) return { href: "", alt: "" };
     if (isAndroid && pkg && !framed) return { href: `intent://#Intent;package=${pkg};S.browser_fallback_url=${encodeURIComponent(play)};end`, alt: play };
     if (isAndroid && pkg) return { href: play, alt: "" };
     if (isIOS && appStore) return { href: appStore, alt: "" };
