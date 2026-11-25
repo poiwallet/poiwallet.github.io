@@ -1,7 +1,7 @@
 /* PoiWallet 1.2.0 — all data stays in this browser (localStorage). */
 (() => {
   "use strict";
-  const VERSION = "1.4.0";
+  const VERSION = "1.5.0";
   const KEY = "poiwallet.v1";
   const $ = id => document.getElementById(id);
 
@@ -652,6 +652,8 @@
   const CFG = window.POIWALLET_CONFIG || {};
   const cloud = !!(CFG.supabaseUrl && CFG.supabaseAnonKey && window.supabase);
   let sb = null, session = null, authMode = "signin", syncTimer = null, syncing = false, lastSyncOk = true;
+  // Family sharing: when the person is in a family, the family's wallet replaces their own in sync.
+  let fam = null, pendingJoin = "", lastPull = 0;
   if (cloud) {
     sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, {
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "implicit", storageKey: "poiwallet.auth" },
@@ -734,13 +736,14 @@
     if (state.cards) state.cards = state.cards.filter(c => !c.sample);
     await pull();
     render(); paintAccount();
+    if (pendingJoin) offerJoin();
     if (firstTime && !state.settings.lockCred && !state.settings.lockAsked && await bioAvailable()) {
       state.settings.lockAsked = true; save(); openOverlay("lockAsk", "lockAskYes");
     }
   }
   async function signOut() {
     try { await sb.auth.signOut(); } catch (e) {}
-    session = null;
+    session = null; fam = null;
     state = { v: 1, cards: [], deleted: {}, settings: { lang, theme: state.settings.theme } };
     save(); while (stack.length) hideTop(); render(); showAuth("signin");
   }
@@ -768,26 +771,106 @@
     const cardsOut = [...byId.values()].filter(c => !(deleted[c.id] && deleted[c.id] >= (c.updated || c.created || 0)));
     return { cards: cardsOut, deleted };
   }
+  async function loadFamily() {
+    const { data: m, error } = await sb.from("family_members").select("family_id").eq("user_id", session.user.id).maybeSingle();
+    if (error) throw error;
+    if (!m) { fam = null; return; }
+    const [{ data: f }, { count }] = await Promise.all([
+      sb.from("families").select("id,invite_code").eq("id", m.family_id).maybeSingle(),
+      sb.from("family_members").select("user_id", { count: "exact", head: true }).eq("family_id", m.family_id),
+    ]);
+    fam = f ? { id: f.id, code: f.invite_code, members: count || 1 } : null;
+  }
+  // The wallet in the cloud: the family's when in one, otherwise the person's own.
+  async function readRemote() {
+    const q = fam ? sb.from("families").select("data").eq("id", fam.id) : sb.from("wallets").select("data").eq("user_id", session.user.id);
+    const { data, error } = await q.maybeSingle();
+    if (error) throw error;
+    return (data && data.data) || {};
+  }
   async function pull() {
     if (!session) return;
+    lastPull = Date.now();
     try {
-      const { data, error } = await sb.from("wallets").select("data").eq("user_id", session.user.id).maybeSingle();
-      if (error) throw error;
-      const m = merge({ cards: state.cards || [], deleted: state.deleted || {} }, (data && data.data) || {});
+      await loadFamily();
+      const m = merge({ cards: state.cards || [], deleted: state.deleted || {} }, await readRemote());
       state.cards = m.cards; state.deleted = m.deleted;
-      save(); await push();
+      save(); await push(true);
     } catch (e) { lastSyncOk = false; paintAccount(); }
   }
-  async function push() {
+  async function push(fresh) {
     if (!session || syncing) return;
     syncing = true;
     try {
+      // Others in the family may have saved since our last read: fold their changes in before writing.
+      if (fam && !fresh) { const m = merge({ cards: state.cards || [], deleted: state.deleted || {} }, await readRemote()); state.cards = m.cards; state.deleted = m.deleted; try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} render(); }
       const payload = { cards: state.cards.filter(c => !c.sample), deleted: state.deleted || {} };
-      const { error } = await sb.from("wallets").upsert({ user_id: session.user.id, data: payload, updated_at: new Date().toISOString() });
+      const now = new Date().toISOString();
+      const { error } = fam
+        ? await sb.from("families").update({ data: payload, updated_at: now }).eq("id", fam.id)
+        : await sb.from("wallets").upsert({ user_id: session.user.id, data: payload, updated_at: now });
       if (error) throw error;
       lastSyncOk = true;
     } catch (e) { lastSyncOk = false; }
     syncing = false; paintAccount();
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && session && Date.now() - lastPull > 30000) pull().then(render);
+  });
+
+  // ---------- Family sharing ----------
+  const famLink = () => location.origin + location.pathname + "#join=" + encodeURIComponent(fam.code);
+  function famError(key) { $("famErr").textContent = t(key); $("famErr").hidden = !key; }
+  async function createFamily() {
+    famError("");
+    try { const { error } = await sb.rpc("create_family"); if (error) throw error; await pull(); render(); toast(t("famCreated")); }
+    catch (e) { famError("authErrGeneric"); }
+  }
+  async function joinFamily(code) {
+    famError("");
+    code = String(code || "").trim().toUpperCase();
+    if (!/^[0-9A-F]{6,12}$/.test(code)) return famError("famBadCode");
+    try {
+      const { error } = await sb.rpc("join_family", { code });
+      if (error) return famError(/full/.test(error.message) ? "famFull" : "famBadCode");
+      pendingJoin = ""; $("famCode").value = "";
+      await pull(); render(); toast(t("famJoined"));
+    } catch (e) { famError("authErrGeneric"); }
+  }
+  async function leaveFamily() {
+    const b = $("famLeave");
+    if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = t("famLeaveConfirm"); return; }
+    try {
+      const { error } = await sb.rpc("leave_family"); if (error) throw error;
+      fam = null; await push(true); render(); toast(t("famLeft"));   // the cards stay on this phone and move to the person's own wallet
+    } catch (e) { famError("authErrGeneric"); }
+  }
+  async function inviteFamily() {
+    const url = famLink(), text = t("famInviteText", { code: fam.code });
+    try { if (navigator.share) { await navigator.share({ title: t("appName"), text, url }); return; } } catch (e) { if (e && e.name === "AbortError") return; }
+    try { await navigator.clipboard.writeText(text + "\n" + url); toast(t("famCopied")); } catch (e) { prompt(t("famInvite"), url); }
+  }
+  function readJoinHash() {
+    const jm = location.hash.match(/^#join=([0-9A-Za-z]{6,12})$/);
+    if (!jm) return false;
+    pendingJoin = jm[1].toUpperCase();
+    try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
+    return true;
+  }
+  // Someone opened an invite link: show the family section with the code filled in.
+  function offerJoin() {
+    if (!session || !pendingJoin) return;
+    if (fam) { pendingJoin = ""; return; }
+    paintInstall(); openOverlay("settings", "famJoin");
+    $("famCode").value = pendingJoin;
+    $("famSec").scrollIntoView({ block: "center" });
+  }
+  function paintFamily() {
+    $("famSec").hidden = !session;
+    if (!session) return;
+    $("famOut").hidden = !!fam; $("famIn").hidden = !fam;
+    if (fam) $("famStatus").textContent = t("famIn", { n: nf().format(fam.members) });
+    $("famLeave").dataset.armed = ""; $("famLeave").textContent = t("famLeave");
   }
   function scheduleSync() { if (!session) return; clearTimeout(syncTimer); syncTimer = setTimeout(push, 1200); }
   window.addEventListener("online", () => { if (session) pull().then(render); });
@@ -801,6 +884,7 @@
     $("lockToggle").checked = !!state.settings.lockCred;
     $("lockRow").hidden = !bioOk; $("lockNa").hidden = bioOk;
     $("delAccBtn").dataset.armed = ""; $("delAccBtn").textContent = t("deleteAccount");
+    paintFamily();
   }
 
   // ---------- Fingerprint / face unlock (WebAuthn platform authenticator) ----------
@@ -930,6 +1014,11 @@
     $("lockToggle").addEventListener("change", () => $("lockToggle").checked ? enableLock() : disableLock());
     $("lockToggleLocal").addEventListener("change", () => $("lockToggleLocal").checked ? enableLock() : disableLock());
     $("signOutBtn").addEventListener("click", signOut);
+    $("famCreate").addEventListener("click", createFamily);
+    $("famJoin").addEventListener("click", () => joinFamily($("famCode").value));
+    $("famCode").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); joinFamily($("famCode").value); } });
+    $("famLeave").addEventListener("click", leaveFamily);
+    $("famInvite").addEventListener("click", inviteFamily);
     $("delAccBtn").addEventListener("click", deleteAccount);
     document.addEventListener("keydown", e => {
       if (!$("auth").hidden || !$("lock").hidden) return;
@@ -950,6 +1039,8 @@
     $("lockToggleLocal").checked = !!state.settings.lockCred;
     if (state.settings.sort) $("sort").value = state.settings.sort;
     paintMascots(); applyLang(); applyTheme(); bind(); render();
+    readJoinHash();
+    window.addEventListener("hashchange", () => { if (readJoinHash()) offerJoin(); });
     if (location.hash === "#add") { try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {} openForm(); }
     try { navigator.storage?.persist?.(); } catch (e) {}
     paintAccount();

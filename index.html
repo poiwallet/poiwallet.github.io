@@ -231,6 +231,19 @@
         <button class="btn danger" id="delAccBtn" type="button" data-t="deleteAccount"></button>
       </div>
     </section>
+    <section id="famSec" hidden>
+      <h3 data-t="famTitle"></h3>
+      <p class="muted small" data-t="famNote"></p>
+      <div class="stack" id="famOut">
+        <button class="btn primary" id="famCreate" type="button" data-t="famCreate"></button>
+        <div class="fam-join"><input id="famCode" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" data-t-ph="famJoinPh"><button class="btn ghost" id="famJoin" type="button" data-t="famJoin"></button></div>
+      </div>
+      <div class="stack" id="famIn" hidden>
+        <p id="famStatus"></p>
+        <div class="row-start"><button class="btn primary" id="famInvite" type="button" data-t="famInvite"></button><button class="btn ghost" id="famLeave" type="button" data-t="famLeave"></button></div>
+      </div>
+      <p class="err" id="famErr" hidden></p>
+    </section>
     <section id="localLockSec" hidden>
       <label class="check"><input id="lockToggleLocal" type="checkbox"><span data-t="lockSetting"></span></label>
     </section>
@@ -256,7 +269,7 @@
       <p class="muted" data-t="termsBody"></p>
     </section>
     <div class="actions"><span class="spacer"></span><button class="btn primary" id="setClose" type="button" data-t="close"></button></div>
-    <p class="ver">PoiWallet 1.4.0</p>
+    <p class="ver">PoiWallet 1.5.0</p>
   </div>
 </div>
 
