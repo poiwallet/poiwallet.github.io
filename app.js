@@ -1,7 +1,7 @@
 /* PoiWallet 1.2.0 — all data stays in this browser (localStorage). */
 (() => {
   "use strict";
-  const VERSION = "1.3.0";
+  const VERSION = "1.3.1";
   const KEY = "poiwallet.v1";
   const $ = id => document.getElementById(id);
 
@@ -127,6 +127,18 @@
     if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) s = "https://" + s;
     try { const u = new URL(s); if (u.protocol === "http:") u.protocol = "https:"; return u.href; } catch (e) { return null; }
   }
+  // Share sheets often paste "App name https://play.google.com/…"; keep just the store link,
+  // and turn market:// links into Play links. A package we know becomes a directory app.
+  function storeLink(raw) {
+    const s = String(raw || "").trim();
+    const pkg = (s.match(/(?:play\.google\.com\/store\/apps\/details|market:\/\/details)\?(?:[^\s#]*&)?id=([A-Za-z0-9_.]+)/) || [])[1];
+    if (pkg) {
+      const a = (window.POI_APPS || []).find(x => x.android === pkg);
+      return { link: `https://play.google.com/store/apps/details?id=${pkg}`, appId: a ? a.id : "" };
+    }
+    const url = (s.match(/https?:\/\/\S+/) || [])[0];
+    return { link: url || s, appId: "" };
+  }
   // ---------- Official app directory ----------
   const APPS = window.POI_APPS || [];
   const normName = s => String(s || "").toLowerCase().normalize("NFKC").replace(/[\s・\-‐_.'’!！]/g, "");
@@ -172,13 +184,17 @@
   function autoLinkApps() {
     let changed = false;
     for (const c of cards()) {
-      if (c.appId || c.link || c.noApp) continue;
+      if (c.appId || c.noApp || /^https:\/\/(play\.google\.com|apps\.apple\.com)\//.test(c.link || "")) continue;
       const m = matchApp(c.name); if (m) { c.appId = m.id; changed = true; }
     }
     return changed;
   }
   let chosenAppId = null, appDismissed = false;
   function paintAppUI() {
+    const sel = $("fApp");
+    sel.innerHTML = `<option value="">${esc(t("fAppNone"))}</option>` + [...APPS].sort((x, y) => x.name.localeCompare(y.name, "ja"))
+      .map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("");
+    sel.value = "";
     const linked = chosenAppId && appById(chosenAppId);
     $("appLinked").hidden = !linked; $("linkWrap").hidden = !!linked;
     if (linked) { $("appLinkedText").textContent = "↗ " + t("appLinked", { name: linked.name }); $("appSuggest").hidden = true; return; }
@@ -429,7 +445,9 @@
     const num = $("fNum").value.trim();
     const fmt = $("fFmt").value;
     if ($("fRgb").value.trim() && !setColorFromRgb()) return;
-    const link = cleanLink($("fLink").value);
+    const pasted = storeLink($("fLink").value);
+    if (pasted.appId && !chosenAppId) chosenAppId = pasted.appId;
+    const link = cleanLink(pasted.link);
     const err = !name ? t("errName") : link === null && !chosenAppId ? t("linkErr") : !num && !link && !chosenAppId ? t("errNumber") : num ? validate(fmt, num) : "";
     if (err) { $("fErr").textContent = err; $("fErr").hidden = false; return; }
     const ptsRaw = parseFloat(String($("fPts").value).replace(",", "."));
@@ -878,6 +896,10 @@
       chosenAppId = m.id; if ($("fCat").value === "other") $("fCat").value = m.cat; paintAppUI();
     });
     $("appUnlink").addEventListener("click", () => { chosenAppId = null; appDismissed = true; paintAppUI(); });
+    $("fApp").addEventListener("change", () => {
+      const m = appById($("fApp").value); if (!m) return;
+      chosenAppId = m.id; $("fLink").value = ""; if ($("fCat").value === "other") $("fCat").value = m.cat; paintAppUI();
+    });
     $("fColorPick").addEventListener("input", () => { chosenColor = $("fColorPick").value; paintSwatches(); });
     $("fRgb").addEventListener("change", setColorFromRgb);
     $("addCouponBtn").addEventListener("click", () => openCouponForm());
