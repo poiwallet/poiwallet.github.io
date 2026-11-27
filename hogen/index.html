@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="ひらがなで打つと方言の言葉が候補に出る予測変換ツール。言葉を足すほど育ちます。">
+<meta name="theme-color" content="#2c4f8a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<title>ほうげん予測変換</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap">
+<style>
+/* Layout: one column tool. Editor on top with a candidate bar, dialect chips, then "my words" growth area. Palette: 藍 (indigo) on pale paper-blue, 柿 accent for user-added words. */
+:root{
+  --bg:#eef2f6; --surface:#ffffff; --ink:#1d2a3a; --muted:#5b6a7d; --line:#d3dbe5;
+  --ai:#2c4f8a; --ai-soft:#dfe7f4; --kaki:#c8662b; --kaki-soft:#f8e6da; --ok:#2f7d4f;
+  --font-display:"Zen Maru Gothic","Hiragino Maru Gothic ProN","Noto Sans JP",sans-serif;
+  --font-body:"Noto Sans JP","Hiragino Sans","Yu Gothic",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#121822; --surface:#1b2431; --ink:#e6ecf3; --muted:#9aa8ba; --line:#2e3a4b;
+  --ai:#8fb0e8; --ai-soft:#24344d; --kaki:#f0a070; --kaki-soft:#3d2a1f; --ok:#6cc48f; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#121822; --surface:#1b2431; --ink:#e6ecf3; --muted:#9aa8ba; --line:#2e3a4b;
+  --ai:#8fb0e8; --ai-soft:#24344d; --kaki:#f0a070; --kaki-soft:#3d2a1f; --ok:#6cc48f; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:15px;line-height:1.7;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 48px}
+.wrap{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+header{display:flex;flex-direction:column;gap:4px}
+h1{font-family:var(--font-display);font-size:1.75rem;margin:0;letter-spacing:.02em;text-wrap:balance}
+h1 small{font-size:.8rem;color:var(--kaki);border:1.5px solid var(--kaki);border-radius:999px;padding:0 8px;margin-left:8px;vertical-align:middle;font-family:var(--font-body)}
+.lead{margin:0;color:var(--muted)}
+h2{font-family:var(--font-display);font-size:1.1rem;margin:0}
+section{display:flex;flex-direction:column;gap:10px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px}
+textarea{width:100%;min-height:120px;resize:vertical;border:none;outline:none;background:transparent;color:var(--ink);font:inherit;font-size:1.1rem;line-height:1.8}
+.editor:focus-within{border-color:var(--ai);box-shadow:0 0 0 3px var(--ai-soft)}
+.cands{display:flex;gap:8px;overflow-x:auto;padding:10px 0 2px;border-top:1px dashed var(--line);min-height:52px;align-items:center;scrollbar-width:thin}
+.cand{flex:none;display:flex;flex-direction:column;align-items:flex-start;gap:0;border:1.5px solid var(--line);background:var(--bg);color:var(--ink);border-radius:10px;padding:4px 12px;font:inherit;cursor:pointer;line-height:1.35;text-align:left}
+.cand b{font-size:1.05rem;font-weight:700}
+.cand span{font-size:.72rem;color:var(--muted)}
+.cand.mine{border-color:var(--kaki);background:var(--kaki-soft)}
+.cand.std b::before{content:"→ ";color:var(--muted);font-weight:400}
+.cand:hover,.cand:focus-visible{border-color:var(--ai);outline:none}
+.hint{font-size:.82rem;color:var(--muted)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{font:inherit;font-size:.9rem;border-radius:999px;border:1.5px solid var(--ai);background:transparent;color:var(--ai);padding:4px 14px;cursor:pointer}
+.btn.primary{background:var(--ai);color:var(--surface)}
+.btn:focus-visible{outline:3px solid var(--ai-soft)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font:inherit;font-size:.88rem;border:1.5px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:2px 12px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--ai);border-color:var(--ai);color:var(--surface)}
+form.add{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+form.add label{display:flex;flex-direction:column;gap:2px;font-size:.82rem;color:var(--muted);min-width:0}
+form.add input,form.add select{font:inherit;font-size:1rem;color:var(--ink);background:var(--bg);border:1.5px solid var(--line);border-radius:8px;padding:6px 10px;width:100%}
+form.add input:focus,form.add select:focus{outline:none;border-color:var(--ai)}
+form.add .full{grid-column:1/-1}
+@media (max-width:480px){form.add{grid-template-columns:1fr}}
+.list{display:flex;flex-direction:column;gap:0}
+.item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.item:last-child{border-bottom:none}
+.item .w{font-weight:700}
+.item .m{font-size:.85rem;color:var(--muted)}
+.tag{font-size:.72rem;border-radius:6px;padding:0 6px;background:var(--ai-soft);color:var(--ai);margin-left:6px;white-space:nowrap}
+.del{font:inherit;font-size:.8rem;border:none;background:none;color:var(--muted);cursor:pointer;text-decoration:underline}
+.stats{display:flex;gap:18px;flex-wrap:wrap;font-size:.85rem;color:var(--muted)}
+.stats b{font-family:var(--font-display);font-size:1.25rem;color:var(--ink);font-variant-numeric:tabular-nums;margin-right:2px}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:6px 16px;border-radius:999px;font-size:.9rem;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.show{opacity:1}
+textarea.io{min-height:80px;font-size:.8rem;font-family:ui-monospace,monospace;border:1.5px solid var(--line);border-radius:8px;padding:8px;background:var(--bg)}
+details summary{cursor:pointer;color:var(--ai);font-size:.9rem}
+@media (prefers-reduced-motion:reduce){.toast{transition:none}}
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+  <header>
+    <h1>ほうげん予測変換<small>試作版</small></h1>
+    <p class="lead">ひらがなで打つと、方言の言葉を候補に出します。標準語で打てば、その方言での言い方も出ます。使うほど、足すほど育ちます。</p>
+  </header>
+
+  <section>
+    <div class="panel editor">
+      <textarea id="text" placeholder="ひらがなで入力してみてください（例：あり → ありがとう の方言）" autocomplete="off" spellcheck="false">今日は</textarea>
+      <div class="cands" id="cands" aria-live="polite"></div>
+    </div>
+    <div class="row">
+      <span class="hint" style="flex:1;min-width:200px">ヒント：漢字に変換せず、ひらがなのまま打って候補をタップ。</span>
+      <button class="btn" id="copy" type="button">文章をコピー</button>
+      <button class="btn" id="clear" type="button">消す</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>よく使う方言</h2>
+    <div class="chips" id="regions"></div>
+    <span class="hint">選んだ地域の言葉を優先して出します。何も選ばなければ全部から出します。</span>
+  </section>
+
+  <section>
+    <h2>言葉を追加する</h2>
+    <form class="add panel" id="addForm">
+      <label>読み（ひらがな）<input id="fReading" required placeholder="なまら" autocomplete="off"></label>
+      <label>表記<input id="fWord" required placeholder="なまら" autocomplete="off"></label>
+      <label>地域<input id="fRegion" required list="regionList" placeholder="北海道" autocomplete="off"></label>
+      <label>標準語での意味<input id="fMeaning" placeholder="とても" autocomplete="off"></label>
+      <label class="full">意味の読み（ひらがな・標準語から探すときに使います）<input id="fMeaningReading" placeholder="とても" autocomplete="off"></label>
+      <div class="row full"><button class="btn primary" type="submit">追加する</button><span class="hint">追加した言葉はこの端末に保存されます。</span></div>
+      <datalist id="regionList"></datalist>
+    </form>
+  </section>
+
+  <section>
+    <h2>育ち具合</h2>
+    <div class="stats" id="stats"></div>
+    <div class="panel"><div class="list" id="myList"></div></div>
+    <details>
+      <summary>バックアップ・引っ越し（書き出し／読み込み）</summary>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+        <textarea class="io" id="io" placeholder="ここに書き出したデータが出ます。別の端末ではここに貼って「読み込む」を押してください。"></textarea>
+        <div class="row"><button class="btn" id="exp" type="button">書き出す</button><button class="btn" id="imp" type="button">読み込む</button></div>
+      </div>
+    </details>
+  </section>
+
+  <section>
+    <h2>スマホのキーボードとして使う（Android）</h2>
+    <div class="panel" style="display:flex;flex-direction:column;gap:6px">
+      <span>どのアプリでも方言の候補が出る「ほうげんキーボード」です。試作版のため、動作は確認中です。</span>
+      <div class="row"><a class="btn primary" href="https://github.com/poiwallet/poiwallet.github.io/releases/tag/hogen-latest" target="_blank" rel="noopener" style="text-decoration:none">APKをダウンロード</a></div>
+      <span class="hint">インストール後、アプリを開いて「キーボードの設定を開く」から有効にしてください。</span>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ---- 初期辞書（サンプル。読み, 表記, 地域, 標準語の意味, 意味の読み） ----
+// dict.json（Android版と共通）を読み込めたらそちらを使う。読めないときはこの内蔵分で動く
+let BASE = [
+ ["おおきに","おおきに","関西","ありがとう","ありがとう"],
+ ["なんでやねん","なんでやねん","関西","どうしてだよ","どうしてだよ"],
+ ["あかん","あかん","関西","だめ","だめ"],
+ ["ほんま","ほんま","関西","本当","ほんとう"],
+ ["めっちゃ","めっちゃ","関西","とても","とても"],
+ ["ちゃう","ちゃう","関西","違う","ちがう"],
+ ["せやな","せやな","関西","そうだね","そうだね"],
+ ["なんぼ","なんぼ","関西","いくら","いくら"],
+ ["かまへん","かまへん","関西","構わない","かまわない"],
+ ["ほかす","ほかす","関西","捨てる","すてる"],
+ ["おもろい","おもろい","関西","面白い","おもしろい"],
+ ["ほな","ほな","関西","それじゃあ","それじゃあ"],
+ ["しんどい","しんどい","関西","疲れた","つかれた"],
+ ["けったいな","けったいな","関西","変な","へんな"],
+ ["おいでやす","おいでやす","京都","いらっしゃいませ","いらっしゃいませ"],
+ ["はんなり","はんなり","京都","上品で華やか","じょうひんではなやか"],
+ ["ばり","ばり","博多","とても","とても"],
+ ["なんしよーと","なんしよーと？","博多","何してるの？","なにしてるの"],
+ ["すいとーよ","好いとーよ","博多","好きだよ","すきだよ"],
+ ["よかよ","よかよ","博多","いいよ","いいよ"],
+ ["はよせんね","早よせんね","博多","早くしなさい","はやくしなさい"],
+ ["じゃけぇ","じゃけぇ","広島","だから","だから"],
+ ["たいぎい","たいぎい","広島","面倒くさい","めんどうくさい"],
+ ["ぶち","ぶち","広島","とても","とても"],
+ ["はぶてる","はぶてる","広島","すねる","すねる"],
+ ["でら","でら","名古屋","とても","とても"],
+ ["どえりゃあ","どえりゃあ","名古屋","ものすごい","ものすごい"],
+ ["けった","けった","名古屋","自転車","じてんしゃ"],
+ ["とろくさい","とろくさい","名古屋","ばかばかしい","ばかばかしい"],
+ ["だがや","だがや","名古屋","だよね","だよね"],
+ ["なまら","なまら","北海道","とても","とても"],
+ ["したっけ","したっけ","北海道","じゃあね","じゃあね"],
+ ["しばれる","しばれる","北海道","凍えるほど寒い","さむい"],
+ ["なげる","なげる","北海道","捨てる","すてる"],
+ ["こわい","こわい","北海道","疲れた","つかれた"],
+ ["めんこい","めんこい","北海道・東北","かわいい","かわいい"],
+ ["んだ","んだ","東北","そうだ","そうだ"],
+ ["しゃっこい","しゃっこい","東北","冷たい","つめたい"],
+ ["いずい","いずい","東北","しっくりこない","しっくりこない"],
+ ["ごしゃぐ","ごしゃぐ","東北","怒る","おこる"],
+ ["おしょすい","おしょすい","東北","恥ずかしい","はずかしい"],
+ ["いぎなり","いぎなり","東北","とても","とても"],
+ ["めんそーれ","めんそーれ","沖縄","いらっしゃい","いらっしゃい"],
+ ["にふぇーでーびる","にふぇーでーびる","沖縄","ありがとうございます","ありがとう"],
+ ["なんくるないさー","なんくるないさー","沖縄","なんとかなるさ","なんとかなる"],
+ ["ちばりよー","ちばりよー","沖縄","頑張れ","がんばれ"],
+ ["はいさい","はいさい","沖縄","こんにちは","こんにちは"],
+ ["でーじ","でーじ","沖縄","とても","とても"],
+ ["まっこと","まっこと","土佐","本当に","ほんとうに"],
+ ["ぜよ","ぜよ","土佐","だよ","だよ"],
+ ["おやっとさあ","おやっとさあ","鹿児島","お疲れさま","おつかれさま"],
+ ["わっぜ","わっぜ","鹿児島","とても","とても"],
+ ["だれやめ","だれやめ","鹿児島","晩酌","ばんしゃく"],
+ ["きのどくな","きのどくな","金沢","ありがとう（恐縮です）","ありがとう"],
+];
+const KEY="hogen-yosoku-v1";
+let state={mine:[],uses:{},regions:[]};
+try{const s=JSON.parse(localStorage.getItem(KEY)||"null");if(s&&typeof s==="object")state=Object.assign(state,s);}catch(e){}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(state));}catch(e){}}
+
+const toKana=s=>s.replace(/[ァ-ヶ]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60));
+const idOf=e=>e.r+"|"+e.w+"|"+e.g;
+function allEntries(){
+  const base=BASE.map(a=>({r:a[0],w:a[1],g:a[2],m:a[3],mr:a[4],mine:false}));
+  return base.concat(state.mine.map(e=>Object.assign({mine:true},e)));
+}
+function regionsList(){return [...new Set(allEntries().flatMap(e=>e.g.split("・")))];}
+
+const $=id=>document.getElementById(id);
+const ta=$("text"),candsEl=$("cands");
+
+// 入力中の末尾のかな（候補の元）を取り出す
+function tailKana(){
+  const before=ta.value.slice(0,ta.selectionStart);
+  const m=before.match(/[ぁ-ゖァ-ヺーー]+$/);
+  return m?m[0]:"";
+}
+function score(e,q,viaStd){
+  let s=0;
+  s+=(state.uses[idOf(e)]||0)*10;
+  if(e.mine)s+=5;
+  if(state.regions.length&&e.g.split("・").some(g=>state.regions.includes(g)))s+=20;
+  if((viaStd?e.mr:e.r)===q)s+=8;
+  if(viaStd)s-=2;
+  return s;
+}
+function suggest(){
+  const raw=tailKana();candsEl.innerHTML="";
+  if(!raw){candsEl.innerHTML='<span class="hint">ひらがなを打つと、ここに候補が出ます。</span>';return;}
+  const q=toKana(raw);
+  const list=[],seen=new Set();
+  for(const e of allEntries()){
+    if(state.regions.length&&!e.g.split("・").some(g=>state.regions.includes(g))&&!e.mine)continue;
+    const byR=toKana(e.r).startsWith(q), byS=e.mr&&toKana(e.mr).startsWith(q);
+    if(!byR&&!byS)continue;
+    const k=idOf(e);if(seen.has(k))continue;seen.add(k);
+    list.push({e,std:!byR,s:score(e,q,!byR)});
+  }
+  list.sort((a,b)=>b.s-a.s||a.e.r.length-b.e.r.length);
+  if(!list.length){candsEl.innerHTML='<span class="hint">候補がありません。下の「言葉を追加する」で足せます。</span>';return;}
+  for(const {e,std} of list.slice(0,12)){
+    const b=document.createElement("button");b.type="button";
+    b.className="cand"+(e.mine?" mine":"")+(std?" std":"");
+    b.innerHTML="<b></b><span></span>";
+    b.querySelector("b").textContent=e.w;
+    b.querySelector("span").textContent=e.g+(e.m?"・"+e.m:"")+(e.mine?"・自分の言葉":"");
+    b.addEventListener("mousedown",ev=>ev.preventDefault());
+    b.addEventListener("click",()=>pick(e,raw));
+    candsEl.appendChild(b);
+  }
+}
+function pick(e,raw){
+  const pos=ta.selectionStart,start=pos-raw.length;
+  ta.value=ta.value.slice(0,start)+e.w+ta.value.slice(pos);
+  const np=start+e.w.length;ta.focus();ta.setSelectionRange(np,np);
+  state.uses[idOf(e)]=(state.uses[idOf(e)]||0)+1;save();renderStats();suggest();
+}
+ta.addEventListener("input",suggest);
+ta.addEventListener("keyup",e=>{if(e.key.startsWith("Arrow"))suggest();});
+ta.addEventListener("click",suggest);
+ta.addEventListener("compositionupdate",()=>setTimeout(suggest,0));
+
+function renderRegions(){
+  const el=$("regions");el.innerHTML="";
+  for(const g of regionsList()){
+    const c=document.createElement("button");c.type="button";c.className="chip";c.textContent=g;
+    c.setAttribute("aria-pressed",state.regions.includes(g));
+    c.onclick=()=>{state.regions=state.regions.includes(g)?state.regions.filter(x=>x!==g):[...state.regions,g];save();renderRegions();suggest();};
+    el.appendChild(c);
+  }
+  $("regionList").innerHTML=regionsList().map(g=>`<option value="${g.replace(/"/g,"")}">`).join("");
+}
+function renderStats(){
+  const used=Object.values(state.uses).reduce((a,b)=>a+b,0);
+  $("stats").innerHTML=`<span><b>${BASE.length+state.mine.length}</b>語 収録</span><span><b>${state.mine.length}</b>語 自分で追加</span><span><b>${used}</b>回 候補を使った</span>`;
+  const L=$("myList");L.innerHTML="";
+  if(!state.mine.length){L.innerHTML='<span class="hint">まだ自分の言葉はありません。地元の言い方や家族だけの言葉を足してみてください。</span>';return;}
+  state.mine.forEach((e,i)=>{
+    const d=document.createElement("div");d.className="item";
+    d.innerHTML='<div><span class="w"></span><span class="tag"></span><div class="m"></div></div><button class="del" type="button">削除</button>';
+    d.querySelector(".w").textContent=e.w+"（"+e.r+"）";
+    d.querySelector(".tag").textContent=e.g;
+    d.querySelector(".m").textContent=e.m?"意味："+e.m:"";
+    d.querySelector(".del").onclick=()=>{state.mine.splice(i,1);save();renderAll();};
+    L.appendChild(d);
+  });
+}
+function renderAll(){renderRegions();renderStats();suggest();}
+
+$("addForm").addEventListener("submit",ev=>{
+  ev.preventDefault();
+  const r=toKana($("fReading").value.trim()),w=$("fWord").value.trim(),g=$("fRegion").value.trim();
+  if(!/^[ぁ-ゖー]+$/.test(r)){toast("読みはひらがなで入れてください");return;}
+  const e={r,w,g,m:$("fMeaning").value.trim(),mr:toKana($("fMeaningReading").value.trim()),at:Date.now()};
+  if(allEntries().some(x=>idOf(x)===idOf(e))){toast("その言葉はもう入っています");return;}
+  state.mine.push(e);save();ev.target.reset();renderAll();toast("「"+w+"」を追加しました");
+});
+$("fReading").addEventListener("change",()=>{if(!$("fWord").value)$("fWord").value=$("fReading").value;});
+$("copy").onclick=()=>{navigator.clipboard.writeText(ta.value).then(()=>toast("コピーしました"),()=>{ta.select();toast("選択しました。長押しでコピーしてください");});};
+$("clear").onclick=()=>{ta.value="";ta.focus();suggest();};
+$("exp").onclick=()=>{$("io").value=JSON.stringify({version:1,mine:state.mine,uses:state.uses});$("io").select();toast("書き出しました");};
+$("imp").onclick=()=>{
+  try{const d=JSON.parse($("io").value);if(!Array.isArray(d.mine))throw 0;
+    const have=new Set(state.mine.map(idOf));let n=0;
+    for(const e of d.mine){if(e&&e.r&&e.w&&e.g&&!have.has(idOf(e))){state.mine.push(e);n++;}}
+    for(const k in (d.uses||{}))state.uses[k]=Math.max(state.uses[k]||0,+d.uses[k]||0);
+    save();renderAll();toast(n+"語を読み込みました");
+  }catch(e){toast("読み込めませんでした。書き出したデータをそのまま貼ってください");}
+};
+let tt;function toast(s){const t=$("toast");t.textContent=s;t.classList.add("show");clearTimeout(tt);tt=setTimeout(()=>t.classList.remove("show"),2200);}
+
+// 初回はサンプル入力で候補を見せる
+ta.value="今日はあり";ta.setSelectionRange(ta.value.length,ta.value.length);
+renderAll();
+fetch("dict.json").then(r=>r.ok?r.json():null).then(d=>{
+  if(Array.isArray(d)&&d.length){BASE=d.map(e=>[e.r,e.w,e.g,e.m||"",e.mr||""]);renderAll();}
+}).catch(()=>{});
+if("serviceWorker" in navigator){navigator.serviceWorker.register("sw.js").catch(()=>{});}
+</script>
+</body>
+</html>
